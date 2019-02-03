@@ -23,14 +23,15 @@ pub struct TimingFrame {
 }
 
 #[derive(Debug)]
-pub struct Frame<'a> {
+pub struct Frame {
     data_length: i32,
     time: i32,
-    data: &'a [u8]
+    data: String
 }
 
-pub struct FrameSegment<'a> {
-    frames: Vec<Frame<'a>>
+#[derive(Debug)]
+pub struct FrameSegment {
+    frames: Vec<Frame>
 }
 
 #[derive(Debug)]
@@ -83,10 +84,9 @@ fn main() {
 
                 decoder.read_to_end(&mut decoded_data).unwrap();
 
-                println!("frame_segments {}-{}: decoded_size={}", start_offset, end_offset, decoded_data.len());
-
                 match frame_segment(&decoded_data) {
                     Ok((_bytes, frame_segment)) => {
+                        println!("frame_segments {}-{}: decoded_size={} decoded_frames={}", start_offset, end_offset, decoded_data.len(), frame_segment.frames.len());
                     },
                     e => {
                         println!("Could not decode webmask frame segment")
@@ -111,11 +111,11 @@ named!(pub timing_frame<TimingFrame>, do_parse!(
     })
 ));
 
-named!(pub frame<Frame>, do_parse!(
+named!(pub parse_frame<Frame>, do_parse!(
     data_length: be_i32
     >> unknown_1: be_i32
     >> time: be_i32
-    >> data: take!(data_length)
+    >> data: map!(length_bytes!(value!(data_length)), |name| String::from_utf8(name.to_vec()).unwrap_or("".to_string()))
     >> (Frame {
         data_length,
         time,
@@ -124,7 +124,7 @@ named!(pub frame<Frame>, do_parse!(
 ));
 
 named!(pub frame_segment<FrameSegment>, do_parse!(
-    frames: many0!(frame)
+    frames: many0!(complete!(parse_frame))
     >> (FrameSegment {
         frames
     })
