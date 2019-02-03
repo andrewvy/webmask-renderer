@@ -3,12 +3,16 @@ extern crate resvg;
 #[macro_use]
 extern crate nom;
 
+extern crate libflate;
+
 use std::env;
 use std::path::Path;
 use std::fs::File;
 use std::io::prelude::*;
 
-use nom::{be_i8, be_i32, be_i64};
+use nom::{be_i8, be_i32, be_i64, rest};
+use nom::{le_i32};
+use libflate::gzip;
 
 use resvg::prelude::*;
 
@@ -19,11 +23,23 @@ pub struct TimingFrame {
 }
 
 #[derive(Debug)]
-pub struct Webmask {
+pub struct Frame<'a> {
+    data_length: i32,
+    time: i32,
+    data: &'a [u8]
+}
+
+pub struct FrameSegment<'a> {
+    frames: Vec<Frame<'a>>
+}
+
+#[derive(Debug)]
+pub struct Webmask<'a> {
     version: i32,
     vu: i32,
     timing_frame_count: i32,
-    timing_frames: Vec<TimingFrame>
+    timing_frames: Vec<TimingFrame>,
+    frame_data: &'a [u8],
 }
 
 fn main() {
@@ -39,11 +55,44 @@ fn main() {
 
     file.read_to_end(&mut buffer).expect("Could not read file.");
 
-    println!("{} bytes read", buffer.len());
+    let buffer_size = buffer.len();
+
+    let final_frame = TimingFrame {
+        time: 0,
+        offset: buffer_size as i32,
+    };
 
     match decode_webmask(&buffer) {
         Ok((_bytes, webmask)) => {
-            println!("{:#?}", webmask);
+            let initial_offset = &webmask.timing_frames[0].offset;
+            let number_of_timing_frames: usize = webmask.timing_frames.len();
+
+            for n in 0..number_of_timing_frames {
+                let current_frame = &webmask.timing_frames[n];
+                let next_frame = if n == number_of_timing_frames - 1 {
+                    &final_frame
+                } else {
+                    &webmask.timing_frames[n + 1]
+                };
+
+                let start_offset = current_frame.offset - initial_offset;
+                let end_offset = next_frame.offset - initial_offset;
+                let slice = &webmask.frame_data[start_offset as usize..end_offset as usize];
+                let mut decoder = gzip::Decoder::new(slice).unwrap();
+                let mut decoded_data = Vec::new();
+
+                decoder.read_to_end(&mut decoded_data).unwrap();
+
+                println!("frame_segments {}-{}: decoded_size={}", start_offset, end_offset, decoded_data.len());
+
+                match frame_segment(&decoded_data) {
+                    Ok((_bytes, frame_segment)) => {
+                    },
+                    e => {
+                        println!("Could not decode webmask frame segment")
+                    }
+                }
+            }
         },
         e => {
             println!("Could not decode webmask file")
@@ -52,13 +101,32 @@ fn main() {
 }
 
 named!(pub timing_frame<TimingFrame>, do_parse!(
-    test: be_i32
+    unknown_1: be_i32
     >> time: be_i32
-    >> test: be_i32
+    >> unknown_2: be_i32
     >> offset: be_i32
     >> (TimingFrame {
         time,
         offset,
+    })
+));
+
+named!(pub frame<Frame>, do_parse!(
+    data_length: be_i32
+    >> unknown_1: be_i32
+    >> time: be_i32
+    >> data: take!(data_length)
+    >> (Frame {
+        data_length,
+        time,
+        data
+    })
+));
+
+named!(pub frame_segment<FrameSegment>, do_parse!(
+    frames: many0!(frame)
+    >> (FrameSegment {
+        frames
     })
 ));
 
@@ -68,10 +136,12 @@ named!(pub decode_webmask<Webmask>, do_parse!(
     >> vu: be_i32
     >> timing_frame_count: be_i32
     >> timing_frames: length_count!(value!(timing_frame_count), timing_frame)
+    >> rest: rest
     >> (Webmask {
         version,
         vu,
         timing_frame_count,
         timing_frames,
+        frame_data: rest,
     })
 ));
