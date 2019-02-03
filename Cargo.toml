@@ -1,0 +1,9 @@
+[package]
+name = "webmask_renderer"
+version = "0.1.0"
+authors = ["Andrew Vy <andrew@andrewvy.com>"]
+edition = "2018"
+
+[dependencies]
+nom = "4.2.0"
+resvg = "0.5.0"
