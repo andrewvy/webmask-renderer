@@ -10,6 +10,7 @@ use std::env;
 use std::path::Path;
 use std::fs::File;
 use std::io::prelude::*;
+use std::cell::RefMut;
 
 use nom::{be_i8, be_i32, be_i64, rest};
 use nom::{le_i32};
@@ -64,6 +65,9 @@ fn main() {
         offset: buffer_size as i32,
     };
 
+    let backend = resvg::default_backend();
+
+    resvg::init();
 
     match decode_webmask(&buffer) {
         Ok((_bytes, webmask)) => {
@@ -71,6 +75,7 @@ fn main() {
             let number_of_timing_frames: usize = webmask.timing_frames.len();
 
             println!("version={} timing_segment_count={}", webmask.version, webmask.timing_frame_count);
+
 
             let mut frame_number = 0;
 
@@ -90,18 +95,59 @@ fn main() {
 
                 decoder.read_to_end(&mut decoded_data).unwrap();
 
+
+
                 match frame_segment(&decoded_data) {
                     Ok((_bytes, frame_segment)) => {
                         println!("frame_segments {}-{}: decoded_size={} decoded_frames={}", start_offset, end_offset, decoded_data.len(), frame_segment.frames.len());
 
+                        let initial_time = &frame_segment.frames[0].time;
+                        let mut total_time = 0;
+
                         for frame in frame_segment.frames.iter() {
                             let svg_data = base64::decode(&frame.data.replace("data:image/svg+xml;base64,", "")).expect("");
                             let svg_string = String::from_utf8(svg_data).unwrap_or("".to_string());
-                            let mut svg_file = File::create(format!("out/{}.svg", frame_number)).expect("out/ directory not found");
-                            svg_file.write_all(svg_string.as_bytes());
+                            let svg_options = usvg::Options {
+                                path: None,
+                                dpi: 96 as f64,
+                                font_family: "Times New Roman".to_owned(),
+                                font_size: 12 as f64,
+                                languages: vec!["en".to_owned()],
+                                keep_named_groups: false
+                            };
+
+                            let svg_tree = usvg::Tree::from_str(&svg_string, &svg_options).unwrap();
+
+                            let width = 1280 as f64;
+                            let height = 720 as f64;
+
+                            {
+                                let mut root = svg_tree.root();
+                                let mut root_node = root.borrow_mut();
+
+                                match *root_node {
+                                    usvg::NodeKind::Svg(ref mut svg) => {
+                                        svg.size = usvg::Size::new(width, height);
+                                    },
+                                    _ => {
+                                    }
+                                }
+                            }
+
+
+                            let opt = resvg::Options::default();
+                            let img = backend.render_to_image(&svg_tree, &opt).unwrap();
+
+                            img.save(Path::new(&format!("out/{}.png", frame_number)));
+
+                            total_time += (frame.time - initial_time);
 
                             frame_number += 1;
                         }
+
+                        let avg_frame_time = total_time / frame_segment.frames.len() as i32;
+
+                        println!("avg_frame_time={}", avg_frame_time);
                     },
                     e => {
                         println!("Could not decode webmask frame segment")

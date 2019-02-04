@@ -6,6 +6,6 @@ edition = "2018"
 
 [dependencies]
 nom = "4.2.0"
-resvg = "0.5.0"
+resvg = { version = "0.5.0", features = ["cairo-backend"] }
 libflate = "0.1"
 base64 = "0.10.1"
