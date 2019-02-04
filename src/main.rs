@@ -4,6 +4,7 @@ extern crate resvg;
 extern crate nom;
 
 extern crate libflate;
+extern crate base64;
 
 use std::env;
 use std::path::Path;
@@ -63,10 +64,15 @@ fn main() {
         offset: buffer_size as i32,
     };
 
+
     match decode_webmask(&buffer) {
         Ok((_bytes, webmask)) => {
             let initial_offset = &webmask.timing_frames[0].offset;
             let number_of_timing_frames: usize = webmask.timing_frames.len();
+
+            println!("version={} timing_segment_count={}", webmask.version, webmask.timing_frame_count);
+
+            let mut frame_number = 0;
 
             for n in 0..number_of_timing_frames {
                 let current_frame = &webmask.timing_frames[n];
@@ -87,6 +93,15 @@ fn main() {
                 match frame_segment(&decoded_data) {
                     Ok((_bytes, frame_segment)) => {
                         println!("frame_segments {}-{}: decoded_size={} decoded_frames={}", start_offset, end_offset, decoded_data.len(), frame_segment.frames.len());
+
+                        for frame in frame_segment.frames.iter() {
+                            let svg_data = base64::decode(&frame.data.replace("data:image/svg+xml;base64,", "")).expect("");
+                            let svg_string = String::from_utf8(svg_data).unwrap_or("".to_string());
+                            let mut svg_file = File::create(format!("out/{}.svg", frame_number)).expect("out/ directory not found");
+                            svg_file.write_all(svg_string.as_bytes());
+
+                            frame_number += 1;
+                        }
                     },
                     e => {
                         println!("Could not decode webmask frame segment")
